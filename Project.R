@@ -1,5 +1,9 @@
 library(RPostgres)
 library(tidyverse)
+library(keras)
+library(tensorflow)
+
+set.seed(333)
 
 conn <- dbConnect(Postgres(), dbname = "drpstatcast", host = "localhost",
                   port = 5432, user = "postgres", password = "drppassword")
@@ -18,7 +22,6 @@ WHERE game_date NOT BETWEEN '2021-03-01' AND '2021-03-31'
 stats_df <- dbGetQuery(conn, stats_query)
 
 more_stats_df <- stats_df %>%
-    # filter(game_year == "2023") %>%
     mutate(game = paste0(game_date, "_", away_team, "_", home_team, "_",
                          game_pk)) %>%
     select(game, game_year, pitcher, batter, events, description, balls, 
@@ -62,9 +65,65 @@ sequences_df <- more_stats_df %>%
     summarise(pitch_sequence = list(paste0(pitch_type, "_")), 
               extending_pitches = list(extending_pitch), pitches = n() + 2, 
               .groups = 'drop') %>%
-    mutate(extending_pitch_sequence = map2(pitch_sequence, extending_pitches,
+    mutate(extending_pitch_sequence = map2(pitch_sequence, extending_pitches, 
                                            paste0),
            pa_id = paste0(game, "_", at_bat_number)) %>%
     select(pitcher, pa_id, pitches, extending_pitch_sequence, pitch_outcome, 
-           batter, -pitch_sequence, -extending_pitches, -game, -at_bat_number)
+           batter, -pitch_sequence, -extending_pitches, -game, 
+           -at_bat_number) %>%
+    slice(-which(sapply(extending_pitch_sequence, 
+                        function(x) {any(c("_0", "_1", "PO_0", "PO_1", "EP_0", 
+                                           "EP_1", "CS_0", "CS_1", "FA_0", 
+                                           "FA_1", "SC_1", "FO_0", 
+                                           "FO_1") %in% x)}))) %>%
+    mutate(pa_id = str_sub(pa_id, start = -8), 
+           outcome = as.character(pitch_outcome)) %>%
+    select(-pitch_outcome)
 View(sequences_df)
+
+test_df <- sequences_df %>%
+    filter(pitcher == 543037)
+View(test_df)
+
+long_df <- unnest(test_df, cols = extending_pitch_sequence) %>%
+    select(-pitcher, -pitches, -batter) %>%
+    group_by(pa_id) %>%
+    mutate(pitch = paste0(row_number(), "_", extending_pitch_sequence)) %>%
+    select(outcome, pa_id, pitch) %>%
+    ungroup()
+View(long_df)
+
+wide_df <- long_df %>%
+    mutate(value = 1) %>%
+    pivot_wider(names_from = pitch, values_from = value, 
+                values_fill = list(value = 0))
+one_hot_df <- cbind(wide_df[, 1:2], 
+                    wide_df[, str_sort(colnames(wide_df)[-c(1:2)], 
+                                       numeric=TRUE)]) %>%
+    select(-pa_id) %>%
+    mutate(outcome = as.numeric(outcome), id = rownames(.))
+View(one_hot_df)
+
+train_df_id <- one_hot_df %>%
+    sample_frac(0.8)
+test_df <- anti_join(one_hot_df, train_df_id, by = "id") %>%
+    select(-id)
+train_df <- train_df_id %>%
+    select(-id)
+
+x_train_df <- select(train_df, -outcome)
+y_train_df <- select(train_df, outcome)
+x_test_df <- select(test_df, -outcome)
+y_test_df <- select(test_df, outcome)
+
+timesteps <- as.numeric(str_sub(tail(colnames(x_train_df), n = 1), end = -6))
+features <- length(unique(str_sub(colnames(x_train_df), start = -5)))
+
+x_train_array <- array(data = x_train_df, dim = c(nrow(train_df), timesteps, 
+                                                  features))
+x_test_array <- array(data = x_test_df, dim = c(nrow(test_df), timesteps, 
+                                                features))
+
+# model <- keras_model_sequential() %>%
+#     layer_simple_rnn(units = 50, input_shape = c(timesteps, features)) %>%
+#     layer_dense(units = 1, activation = 'sigmoid')
