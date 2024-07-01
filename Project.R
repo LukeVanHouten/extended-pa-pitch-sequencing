@@ -2,6 +2,7 @@ library(RPostgres)
 library(tidyverse)
 library(keras)
 library(tensorflow)
+library(reticulate)
 
 set.seed(333)
 
@@ -59,7 +60,7 @@ sequences_df <- more_stats_df %>%
     select(game, pitcher, batter, pitch_type, at_bat_number, extended_pa_length,
            pitch_outcome, extending_pitch) %>%
     group_by(pitcher, game) %>%
-    mutate(at_bat_number = dense_rank(at_bat_number)) %>%
+    # mutate(at_bat_number = dense_rank(at_bat_number)) %>%
     ungroup() %>%
     group_by(pitcher, game, at_bat_number, pitch_outcome, batter) %>%
     summarise(pitch_sequence = list(paste0(pitch_type, "_")), 
@@ -76,16 +77,15 @@ sequences_df <- more_stats_df %>%
                                            "EP_1", "CS_0", "CS_1", "FA_0", 
                                            "FA_1", "SC_1", "FO_0", 
                                            "FO_1") %in% x)}))) %>%
-    mutate(pa_id = str_sub(pa_id, start = -8), 
-           outcome = as.character(pitch_outcome)) %>%
+    mutate(outcome = as.character(pitch_outcome)) %>%
     select(-pitch_outcome)
 View(sequences_df)
 
-test_df <- sequences_df %>%
-    filter(pitcher == 543037)
-View(test_df)
+# small_df <- sequences_df %>%
+#     filter(pitcher %in% c(453286, 543037))
+# View(small_df)
 
-long_df <- unnest(test_df, cols = extending_pitch_sequence) %>%
+long_df <- unnest(sequences_df, cols = extending_pitch_sequence) %>%
     select(-pitcher, -pitches, -batter) %>%
     group_by(pa_id) %>%
     mutate(pitch = paste0(row_number(), "_", extending_pitch_sequence)) %>%
@@ -101,29 +101,94 @@ one_hot_df <- cbind(wide_df[, 1:2],
                     wide_df[, str_sort(colnames(wide_df)[-c(1:2)], 
                                        numeric=TRUE)]) %>%
     select(-pa_id) %>%
-    mutate(outcome = as.numeric(outcome), id = rownames(.))
+    mutate(outcome = as.numeric(outcome))
 View(one_hot_df)
 
-train_df_id <- one_hot_df %>%
+features_df <- one_hot_df %>%
+    select(-outcome)
+
+timesteps <- 1:as.numeric(str_sub(tail(colnames(features_df), n = 1), end = -6))
+features <- unique(sort(str_sub(colnames(features_df), start = -5)))
+all_columns <- as.vector(outer(timesteps, features, paste0))
+missing_columns <- setdiff(all_columns, colnames(features_df))
+for (i in missing_columns) {features_df[[i]] <- 0}
+
+more_columns <- as.vector(outer(unique(gsub("_[01]$", "", names(features_df))), 
+                                c("_0", "_1"), paste0))
+more_missing_columns <- setdiff(more_columns, colnames(features_df))
+for (i in more_missing_columns) {features_df[[i]] <- 0}
+
+prefixes <- unique(gsub("_[01]$", "", names(features_df)))
+pitch_df <- as.data.frame(sapply(prefixes, function(a) {
+    rowSums(features_df[, grepl(a, names(features_df))])
+}))
+colnames(pitch_df) <- prefixes
+
+sorted_df <- cbind(select(one_hot_df, outcome), 
+                   pitch_df[, str_sort(colnames(pitch_df), numeric=TRUE)])
+    # mutate(id = rownames(.))
+
+majority_class <- sorted_df %>%
+    filter(outcome == 1)
+minority_class <- sorted_df %>%
+    filter(outcome == 0)
+
+# undersampled_majority_class <- majority_class %>%
+#     sample_n(size = nrow(minority_class))
+oversampled_minority_class <- minority_class %>%
+    sample_n(size = nrow(majority_class), replace = TRUE)
+
+# undersampled_df <- rbind(minority_class, undersampled_majority_class) %>%
+#     sample_n(size = n(), replace = FALSE) %>%
+#     mutate(id = rownames(.))
+oversampled_df <- rbind(majority_class, oversampled_minority_class) %>%
+    sample_n(size = n(), replace = FALSE) %>%
+    mutate(id = rownames(.))
+
+train_df_id <- oversampled_df %>%
     sample_frac(0.8)
-test_df <- anti_join(one_hot_df, train_df_id, by = "id") %>%
+test_df <- anti_join(oversampled_df, train_df_id, by = "id") %>%
     select(-id)
 train_df <- train_df_id %>%
     select(-id)
 
 x_train_df <- select(train_df, -outcome)
-y_train_df <- select(train_df, outcome)
 x_test_df <- select(test_df, -outcome)
-y_test_df <- select(test_df, outcome)
+y_train_df <- train_df$outcome
+y_test_df <- test_df$outcome
 
-timesteps <- as.numeric(str_sub(tail(colnames(x_train_df), n = 1), end = -6))
-features <- length(unique(str_sub(colnames(x_train_df), start = -5)))
+num_features <- length(unique(sort(str_sub(colnames(pitch_df), start = -3))))
 
-x_train_array <- array(data = x_train_df, dim = c(nrow(train_df), timesteps, 
-                                                  features))
-x_test_array <- array(data = x_test_df, dim = c(nrow(test_df), timesteps, 
-                                                features))
+model <- keras_model_sequential() %>%
+    layer_dense(input_shape = dim(x_train_array)[2:3], 
+                units = length(timesteps)) %>%
+    layer_simple_rnn(units = length(timesteps), 
+                     input_shape = dim(x_train_array)[2:3]) %>%
+    layer_dense(units = 1, activation = "tanh")
 
-# model <- keras_model_sequential() %>%
-#     layer_simple_rnn(units = 50, input_shape = c(timesteps, features)) %>%
-#     layer_dense(units = 1, activation = 'sigmoid')
+model %>% compile(
+    loss = "binary_crossentropy", 
+    optimizer = optimizer_adam(),
+    metrics = list('Precision')
+)
+summary(model)
+
+history <- model %>% fit(
+    x_train_array, y_train_df,
+    epochs = 16,
+    batch_size = 128,
+    validation_split = 0.1
+)
+
+model %>% evaluate(x_test_array, y_test_df)
+
+prediction <- as.list(model %>% predict(x_test_array) %>% `>`(0.5) %>% 
+                          k_cast("int32"))
+ct <- table(y_test_df, prediction)
+ct
+
+predicted_sequences <- cbind(y_test_df, prediction, x_test_df)
+
+# rm(model)
+# rm(history)
+# rm(prediction)
