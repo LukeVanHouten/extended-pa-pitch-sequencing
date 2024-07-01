@@ -159,6 +159,13 @@ y_test_df <- test_df$outcome
 
 num_features <- length(unique(sort(str_sub(colnames(pitch_df), start = -3))))
 
+x_train_array <- array(unlist(x_train_df),
+                       dim = c(nrow(x_train_df), num_features,
+                               length(timesteps)))
+x_test_array <- array(unlist(x_test_df),
+                      dim = c(nrow(x_test_df), num_features,
+                              length(timesteps)))
+
 model <- keras_model_sequential() %>%
     layer_dense(input_shape = dim(x_train_array)[2:3], 
                 units = length(timesteps)) %>%
