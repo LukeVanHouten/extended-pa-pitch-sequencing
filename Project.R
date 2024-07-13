@@ -2,7 +2,6 @@ library(RPostgres)
 library(tidyverse)
 library(keras)
 library(tensorflow)
-library(reticulate)
 
 set.seed(333)
 
@@ -54,7 +53,6 @@ more_stats_df <- stats_df %>%
     group_by(pitcher, game, at_bat_number, pitch_number) %>%
     arrange(pitcher, game, at_bat_number, pitch_number) %>%
     ungroup()
-View(more_stats_df)
 
 sequences_df <- more_stats_df %>%
     select(game, pitcher, batter, pitch_type, at_bat_number, extended_pa_length,
@@ -75,11 +73,10 @@ sequences_df <- more_stats_df %>%
     slice(-which(sapply(extending_pitch_sequence, 
                         function(x) {any(c("_0", "_1", "PO_0", "PO_1", "EP_0", 
                                            "EP_1", "CS_0", "CS_1", "FA_0", 
-                                           "FA_1", "SC_1", "FO_0", 
+                                           "FA_1", "SC_0", "SC_1", "FO_0", 
                                            "FO_1") %in% x)}))) %>%
     mutate(outcome = as.character(pitch_outcome)) %>%
     select(-pitch_outcome)
-View(sequences_df)
 
 # small_df <- sequences_df %>%
 #     filter(pitcher %in% c(453286, 543037))
@@ -91,7 +88,6 @@ long_df <- unnest(sequences_df, cols = extending_pitch_sequence) %>%
     mutate(pitch = paste0(row_number(), "_", extending_pitch_sequence)) %>%
     select(outcome, pa_id, pitch) %>%
     ungroup()
-View(long_df)
 
 wide_df <- long_df %>%
     mutate(value = 1) %>%
@@ -102,7 +98,6 @@ one_hot_df <- cbind(wide_df[, 1:2],
                                        numeric=TRUE)]) %>%
     select(-pa_id) %>%
     mutate(outcome = as.numeric(outcome))
-View(one_hot_df)
 
 features_df <- one_hot_df %>%
     select(-outcome)
@@ -242,29 +237,33 @@ correct_pitches <- map(1:max(lengths(correct_sequences$sequences)), function(i){
 
 correct_rates_df <- do.call(rbind, lapply(correct_pitches, count_and_rate)) %>%
     setNames(c("count", "type", "rate")) %>%
+    rownames_to_column("row") %>%
     group_by(type) %>%
-    mutate(rowid = row_number()) %>%
+    mutate(rowid = str_sub(row, start = 7, end = 8)) %>%
+    select(-row) %>%
     pivot_wider(names_from = rowid, values_from = c(rate, count), 
                 names_sep = "_") %>%
-    arrange(desc(rate_1)) %>%
+    arrange(desc(rate_1.)) %>%
     replace(is.na(.), 0) %>%
     ungroup() %>%
-    select(c("type", unlist(lapply(1:max(ncol(select(correct_pitches, 
-                                                     starts_with("Pitch_")))), 
-                                   function(x) c(paste0("count_", x), 
-                                                 paste0("rate_", x))))))
+    rename_with(~ .x %>% str_remove("\\.") %>%
+                    str_replace("rate_(\\d+)", "rate_\\1") %>%
+                    str_replace("count_(\\d+)", "count_\\1")) %>%
+    select(type, unlist(map(1:ncol(select(correct_pitches, 
+                                          starts_with("Pitch_"))),
+                            ~ c(paste0("count_", .), paste0("rate_", .)))))
 
 false_positives <- predicted_sequences %>%
     filter(y_test == 0 & prediction == 1) %>%
     select(-y_test, -prediction)
 
 fp_sequences <- false_positives %>%
-    mutate(sequences = apply(false_positives, 1, function(x){
+    mutate(sequences = apply(false_positives, 1, function(x) {
                names(false_positives)[which(x == 1)]})) %>%
     select(sequences) %>%
     mutate(sequences = map(sequences, ~ gsub("^\\d+_", "", .)))
 
-fp_pitches <- map(1:max(lengths(fp_sequences$sequences)), function(i){
+fp_pitches <- map(1:max(lengths(fp_sequences$sequences)), function(i) {
     map_chr(fp_sequences$sequences, ~ ifelse(i <= length(.x), .x[i], 
                                              NA_character_))}) %>%
     as.data.frame() %>%
@@ -272,29 +271,33 @@ fp_pitches <- map(1:max(lengths(fp_sequences$sequences)), function(i){
 
 fp_rates_df <- do.call(rbind, lapply(fp_pitches, count_and_rate)) %>%
     setNames(c("count", "type", "rate")) %>%
+    rownames_to_column("row") %>%
     group_by(type) %>%
-    mutate(rowid = row_number()) %>%
+    mutate(rowid = str_sub(row, 7, 8)) %>%
+    select(-row) %>%
     pivot_wider(names_from = rowid, values_from = c(rate, count), 
                 names_sep = "_") %>%
-    arrange(desc(rate_1)) %>%
+    arrange(desc(rate_1.)) %>%
     replace(is.na(.), 0) %>%
     ungroup() %>%
-    select(c("type", unlist(lapply(1:max(ncol(select(fp_pitches, 
-                                                     starts_with("Pitch_")))), 
-                                   function(x) c(paste0("count_", x), 
-                                                 paste0("rate_", x))))))
+    rename_with(~ .x %>% str_remove("\\.") %>%
+                    str_replace("rate_(\\d+)", "rate_\\1") %>%
+                    str_replace("count_(\\d+)", "count_\\1")) %>%
+    select(type, unlist(map(1:ncol(select(fp_pitches, 
+                                          starts_with("Pitch_"))),
+                            ~ c(paste0("count_", .), paste0("rate_", .)))))
 
 false_negatives <- predicted_sequences %>%
     filter(y_test == 1 & prediction == 0) %>%
     select(-y_test, -prediction)
 
 fn_sequences <- false_negatives %>%
-    mutate(sequences = apply(false_negatives, 1, function(x){
+    mutate(sequences = apply(false_negatives, 1, function(x) {
         names(false_negatives)[which(x == 1)]})) %>%
     select(sequences) %>%
     mutate(sequences = map(sequences, ~ gsub("^\\d+_", "", .)))
 
-fn_pitches <- map(1:max(lengths(fn_sequences$sequences)), function(i){
+fn_pitches <- map(1:max(lengths(fn_sequences$sequences)), function(i) {
     map_chr(fn_sequences$sequences, ~ ifelse(i <= length(.x), .x[i], 
                                              NA_character_))}) %>%
     as.data.frame() %>%
@@ -302,14 +305,41 @@ fn_pitches <- map(1:max(lengths(fn_sequences$sequences)), function(i){
 
 fn_rates_df <- do.call(rbind, lapply(fn_pitches, count_and_rate)) %>%
     setNames(c("count", "type", "rate")) %>%
+    rownames_to_column("row") %>%
     group_by(type) %>%
-    mutate(rowid = row_number()) %>%
+    mutate(rowid = str_sub(row, 7, 8)) %>%
+    select(-row) %>%
     pivot_wider(names_from = rowid, values_from = c(rate, count), 
                 names_sep = "_") %>%
-    arrange(desc(rate_1)) %>%
+    arrange(desc(rate_1.)) %>%
     replace(is.na(.), 0) %>%
     ungroup() %>%
-    select(c("type", unlist(lapply(1:max(ncol(select(fn_pitches, 
-                                                     starts_with("Pitch_")))), 
-                                   function(x) c(paste0("count_", x), 
-                                                 paste0("rate_", x))))))
+    rename_with(~ .x %>% str_remove("\\.") %>%
+                    str_replace("rate_(\\d+)", "rate_\\1") %>%
+                    str_replace("count_(\\d+)", "count_\\1")) %>%
+    select(type, unlist(map(1:ncol(select(fn_pitches, 
+                                          starts_with("Pitch_"))),
+                            ~ c(paste0("count_", .), paste0("rate_", .)))))
+
+combined_rates <- bind_rows(correct_rates_df, fp_rates_df, fn_rates_df) %>%
+    mutate(id = row_number()) %>%
+    mutate_all(as.character)
+
+# This hard coding of FF should probably be changed
+ff_indices <- as.numeric(filter(combined_rates, type == "FF")$id[2:3])
+rates_df <- bind_rows(data.frame(matrix("Correct", nrow = 1, 
+                                        ncol = ncol(combined_rates)) %>%
+                                        `colnames<-`(colnames(combined_rates))),
+                      filter(combined_rates, row_number() < ff_indices[[1]]),
+                      data.frame(matrix("False Positives", nrow = 1, 
+                                        ncol = ncol(combined_rates)) %>%
+                                        `colnames<-`(colnames(combined_rates))),
+                      filter(combined_rates, (ff_indices[[1]] <= row_number()) & 
+                                            (row_number() < ff_indices[[2]])),
+                      data.frame(matrix("False Negatives", nrow = 1, 
+                                        ncol = ncol(combined_rates)) %>%
+                                        `colnames<-`(colnames(combined_rates))),
+                      filter(combined_rates, 
+                             row_number() >= ff_indices[[2]])) %>% 
+    replace(is.na(.), 0) %>%
+    select(-id)
