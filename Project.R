@@ -231,7 +231,7 @@ correct_sequences <- correct_predictions %>%
 
 correct_pitches <- map(1:max(lengths(correct_sequences$sequences)), function(i){
     map_chr(correct_sequences$sequences, ~ ifelse(i <= length(.x), .x[i], 
-                                             NA_character_))}) %>%
+                                                  NA_character_))}) %>%
     as.data.frame() %>%
     setNames(paste0("Pitch_", 1:max(lengths(correct_sequences$sequences))))
 
