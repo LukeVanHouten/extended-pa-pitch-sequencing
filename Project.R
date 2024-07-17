@@ -39,7 +39,7 @@ more_stats_df <- stats_df %>%
            (balls[pitch_number == max(pitch_number)] +
             strikes[pitch_number == max(pitch_number)] + 1)) %>%
     filter(extended_pa_length > 0) %>%
-    mutate(pitch_outcome = as.numeric(any(events %in%  # 1 is out, 0 is hit
+    mutate(pitch_outcome = as.numeric(any(events %in%  # 1 is out, 0 is hit/walk
                                       c("strikeout", "pickoff_1b", "pickoff_3b",
                                         "strikeout_double_play", "triple_play",
                                         "double_play", "caught_stealing_2b", 
@@ -58,7 +58,6 @@ sequences_df <- more_stats_df %>%
     select(game, pitcher, batter, pitch_type, at_bat_number, extended_pa_length,
            pitch_outcome, extending_pitch) %>%
     group_by(pitcher, game) %>%
-    # mutate(at_bat_number = dense_rank(at_bat_number)) %>%
     ungroup() %>%
     group_by(pitcher, game, at_bat_number, pitch_outcome, batter) %>%
     summarise(pitch_sequence = list(paste0(pitch_type, "_")), 
@@ -113,14 +112,14 @@ more_columns <- as.vector(outer(unique(gsub("_[01]$", "", names(features_df))),
 more_missing_columns <- setdiff(more_columns, colnames(features_df))
 for (i in more_missing_columns) {features_df[[i]] <- 0}
 
-prefixes <- unique(gsub("_[01]$", "", names(features_df)))
-pitch_df <- as.data.frame(sapply(prefixes, function(a) {
-    rowSums(features_df[, grepl(a, names(features_df))])
-}))
-colnames(pitch_df) <- prefixes
+# prefixes <- unique(gsub("_[01]$", "", names(features_df)))
+# pitch_df <- as.data.frame(sapply(prefixes, function(a) {
+#     rowSums(features_df[, grepl(a, names(features_df))])
+# }))
+# colnames(pitch_df) <- prefixes
 
 sorted_df <- cbind(select(one_hot_df, outcome), 
-                   pitch_df[, str_sort(colnames(pitch_df), numeric=TRUE)])
+                   features_df[, str_sort(colnames(features_df), numeric=TRUE)])
     # mutate(id = rownames(.))
 
 majority_class <- sorted_df %>%
@@ -149,40 +148,40 @@ train_df <- train_df_id %>%
 
 x_train_df <- select(train_df, -outcome)
 x_test_df <- select(test_df, -outcome)
-y_train_df <- select(train_df, outcome)
-y_test_df <- select(test_df, outcome)
+y_train_df <- train_df$outcome
+y_test_df <- test_df$outcome
 
-num_features <- length(unique(sort(str_sub(colnames(pitch_df), start = -3))))
+num_features <- length(unique(sort(str_sub(colnames(features_df), start = -4))))
 
 x_train_array <- array(unlist(x_train_df),
                        dim = c(nrow(x_train_df), num_features,
                                length(timesteps)))
 
-combined_indices_train <- integer(0)
-for (i in 1:dim(x_train_array)[3]) {
-    indices_train <- which(rowSums(x_train_array[, , i]) > 1)
-    combined_indices_train <- c(combined_indices_train, indices_train)
-}
-x_train <- x_train_array[-combined_indices_train, , ]
-y_train <- y_train_df[-combined_indices_train, ]
+# combined_indices_train <- integer(0)
+# for (i in 1:dim(x_train_array)[3]) {
+#     indices_train <- which(rowSums(x_train_array[, , i]) > 1)
+#     combined_indices_train <- c(combined_indices_train, indices_train)
+# }
+# x_train <- x_train_array[-combined_indices_train, , ]
+# y_train <- y_train_df[-combined_indices_train, ]
 
 x_test_array <- array(unlist(x_test_df),
                       dim = c(nrow(x_test_df), num_features,
                               length(timesteps)))
 
-combined_indices_test <- integer(0)
-for (i in 1:dim(x_test_array)[3]) {
-    indices_test <- which(rowSums(x_test_array[, , i]) > 1)
-    combined_indices_test <- c(combined_indices_test, indices_test)
-}
-x_test <- x_test_array[-combined_indices_test, , ]
-y_test <- y_test_df[-combined_indices_test, ]
+# combined_indices_test <- integer(0)
+# for (i in 1:dim(x_test_array)[3]) {
+#     indices_test <- which(rowSums(x_test_array[, , i]) > 1)
+#     combined_indices_test <- c(combined_indices_test, indices_test)
+# }
+# x_test <- x_test_array[-combined_indices_test, , ]
+# y_test <- y_test_df[-combined_indices_test, ]
 
 model <- keras_model_sequential() %>%
-    layer_dense(input_shape = dim(x_train)[2:3], 
+    layer_dense(input_shape = dim(x_train_array)[2:3], 
                 units = length(timesteps)) %>%
     layer_simple_rnn(units = length(timesteps), 
-                     input_shape = dim(x_train)[2:3]) %>%
+                     input_shape = dim(x_train_array)[2:3]) %>%
     layer_dense(units = 1, activation = "tanh")
 
 model %>% compile(
@@ -193,26 +192,26 @@ model %>% compile(
 summary(model)
 
 history <- model %>% fit(
-    x_train, y_train,
+    x_train_array, y_train_df,
     epochs = 16,
     batch_size = 128,
     validation_split = 0.1
 )
 
-model %>% evaluate(x_test, y_test)
+model %>% evaluate(x_test_array, y_test_df)
 
-prediction <- as.list(model %>% predict(x_test) %>% `>`(0.5) %>% 
+prediction <- as.list(model %>% predict(x_test_array) %>% `>`(0.5) %>% 
                           k_cast("int32"))
-ct <- table(y_test, prediction)
+ct <- table(y_test_df, prediction)
 ct
 
 # rm(model)
 # rm(history)
 # rm(prediction)
 
-x_test_fixed <- x_test_df[-combined_indices_test, ]
+# x_test_fixed <- x_test_df[-combined_indices_test, ]
 
-predicted_sequences <- cbind(y_test, prediction, x_test_fixed)
+predicted_sequences <- cbind(y_test_df, prediction, x_test_df)
 
 count_and_rate <- function(column) {
     counts <- table(na.omit(column))
@@ -220,8 +219,8 @@ count_and_rate <- function(column) {
 }
 
 correct_predictions <- predicted_sequences %>%
-    filter(y_test == prediction) %>%
-    select(-y_test, -prediction)
+    filter(y_test_df == prediction) %>%
+    select(-y_test_df, -prediction)
 
 correct_sequences <- correct_predictions %>%
     mutate(sequences = apply(correct_predictions, 1, function(x) {
@@ -254,8 +253,8 @@ correct_rates_df <- do.call(rbind, lapply(correct_pitches, count_and_rate)) %>%
                             ~ c(paste0("count_", .), paste0("rate_", .)))))
 
 false_positives <- predicted_sequences %>%
-    filter(y_test == 0 & prediction == 1) %>%
-    select(-y_test, -prediction)
+    filter(y_test_df == 0 & prediction == 1) %>%
+    select(-y_test_df, -prediction)
 
 fp_sequences <- false_positives %>%
     mutate(sequences = apply(false_positives, 1, function(x) {
@@ -288,8 +287,8 @@ fp_rates_df <- do.call(rbind, lapply(fp_pitches, count_and_rate)) %>%
                             ~ c(paste0("count_", .), paste0("rate_", .)))))
 
 false_negatives <- predicted_sequences %>%
-    filter(y_test == 1 & prediction == 0) %>%
-    select(-y_test, -prediction)
+    filter(y_test_df == 1 & prediction == 0) %>%
+    select(-y_test_df, -prediction)
 
 fn_sequences <- false_negatives %>%
     mutate(sequences = apply(false_negatives, 1, function(x) {
@@ -325,8 +324,8 @@ combined_rates <- bind_rows(correct_rates_df, fp_rates_df, fn_rates_df) %>%
     mutate(id = row_number()) %>%
     mutate_all(as.character)
 
-# This hard coding of FF should probably be changed
-ff_indices <- as.numeric(filter(combined_rates, type == "FF")$id[2:3])
+# This hard coding of FF_0 should probably be changed
+ff_indices <- as.numeric(filter(combined_rates, type == "FF_0")$id[2:3])
 rates_df <- bind_rows(data.frame(matrix("Correct", nrow = 1, 
                                         ncol = ncol(combined_rates)) %>%
                                         `colnames<-`(colnames(combined_rates))),
