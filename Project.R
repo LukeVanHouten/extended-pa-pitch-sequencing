@@ -33,7 +33,7 @@ more_stats_df <- stats_df %>%
     mutate(pitch_count = n()) %>%
     ungroup() %>%
     filter(pitch_count >= 1000) %>%
-    filter(!(pitch_number %in% c(1, 2))) %>%
+    # filter(!(pitch_number %in% c(1, 2))) %>%
     group_by(game, at_bat_number) %>%
     mutate(extended_pa_length = max(pitch_number) -
            (balls[pitch_number == max(pitch_number)] +
@@ -61,7 +61,7 @@ sequences_df <- more_stats_df %>%
     ungroup() %>%
     group_by(pitcher, game, at_bat_number, pitch_outcome, batter) %>%
     summarise(pitch_sequence = list(paste0(pitch_type, "_")), 
-              extending_pitches = list(extending_pitch), pitches = n() + 2, 
+              extending_pitches = list(extending_pitch), pitches = n(), 
               .groups = 'drop') %>%
     mutate(extending_pitch_sequence = map2(pitch_sequence, extending_pitches, 
                                            paste0),
@@ -119,7 +119,10 @@ for (i in more_missing_columns) {features_df[[i]] <- 0}
 # colnames(pitch_df) <- prefixes
 
 sorted_df <- cbind(select(one_hot_df, outcome), 
-                   features_df[, str_sort(colnames(features_df), numeric=TRUE)])
+                   features_df[, str_sort(colnames(features_df), 
+                                          numeric=TRUE)]) %>%
+    filter(if_all(all_of(colnames(features_df)[c(2, 4, 7, 13, 17, 19, 21, 23, 
+                                                 29, 31)]), ~ . == 0))
     # mutate(id = rownames(.))
 
 majority_class <- sorted_df %>%
@@ -182,7 +185,7 @@ model <- keras_model_sequential() %>%
                 units = length(timesteps)) %>%
     layer_simple_rnn(units = length(timesteps), 
                      input_shape = dim(x_train_array)[2:3]) %>%
-    layer_dense(units = 1, activation = "tanh")
+    layer_dense(units = 1, activation = "sigmoid")
 
 model %>% compile(
     loss = "binary_crossentropy", 
@@ -242,7 +245,7 @@ correct_rates_df <- do.call(rbind, lapply(correct_pitches, count_and_rate)) %>%
     select(-row) %>%
     pivot_wider(names_from = rowid, values_from = c(rate, count), 
                 names_sep = "_") %>%
-    arrange(desc(rate_1.)) %>%
+    arrange(desc(rate_3.)) %>%
     replace(is.na(.), 0) %>%
     ungroup() %>%
     rename_with(~ .x %>% str_remove("\\.") %>%
@@ -276,7 +279,7 @@ fp_rates_df <- do.call(rbind, lapply(fp_pitches, count_and_rate)) %>%
     select(-row) %>%
     pivot_wider(names_from = rowid, values_from = c(rate, count), 
                 names_sep = "_") %>%
-    arrange(desc(rate_1.)) %>%
+    arrange(desc(rate_3.)) %>%
     replace(is.na(.), 0) %>%
     ungroup() %>%
     rename_with(~ .x %>% str_remove("\\.") %>%
@@ -310,7 +313,7 @@ fn_rates_df <- do.call(rbind, lapply(fn_pitches, count_and_rate)) %>%
     select(-row) %>%
     pivot_wider(names_from = rowid, values_from = c(rate, count), 
                 names_sep = "_") %>%
-    arrange(desc(rate_1.)) %>%
+    arrange(desc(rate_3.)) %>%
     replace(is.na(.), 0) %>%
     ungroup() %>%
     rename_with(~ .x %>% str_remove("\\.") %>%
