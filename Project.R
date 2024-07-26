@@ -370,14 +370,14 @@ rates_df <- bind_rows(data.frame(matrix("True Positives", nrow = 1,
                       filter(combined_rates, row_number() < ff_indices[[1]]),
                       data.frame(matrix("True Negatives", nrow = 1, 
                                         ncol = ncol(combined_rates)) %>%
-                                     `colnames<-`(colnames(combined_rates))),
+                                        `colnames<-`(colnames(combined_rates))),
                       filter(combined_rates, (ff_indices[[1]] <= row_number()) & 
-                                 (row_number() < ff_indices[[2]])),
+                                             (row_number() < ff_indices[[2]])),
                       data.frame(matrix("False Positives", nrow = 1, 
                                         ncol = ncol(combined_rates)) %>%
                                         `colnames<-`(colnames(combined_rates))),
                       filter(combined_rates, (ff_indices[[2]] <= row_number()) & 
-                                            (row_number() < ff_indices[[3]])),
+                                             (row_number() < ff_indices[[3]])),
                       data.frame(matrix("False Negatives", nrow = 1, 
                                         ncol = ncol(combined_rates)) %>%
                                         `colnames<-`(colnames(combined_rates))),
@@ -385,3 +385,5 @@ rates_df <- bind_rows(data.frame(matrix("True Positives", nrow = 1,
                              row_number() >= ff_indices[[3]])) %>% 
     replace(is.na(.), 0) %>%
     select(-id)
+
+write.csv(rates_df, "rates.csv", row.names=FALSE)
