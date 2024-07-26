@@ -206,7 +206,6 @@ model %>% evaluate(x_test_array, y_test_df)
 prediction <- as.list(model %>% predict(x_test_array) %>% `>`(0.5) %>% 
                           k_cast("int32"))
 ct <- table(y_test_df, prediction)
-ct
 
 # rm(model)
 # rm(history)
@@ -215,6 +214,33 @@ ct
 # x_test_fixed <- x_test_df[-combined_indices_test, ]
 
 predicted_sequences <- cbind(y_test_df, prediction, x_test_df)
+
+confusion_table <- function(i) {
+    table(factor(predicted_sequences[rowSums(select(predicted_sequences, 
+                                                    -y_test_df, -prediction)) 
+                                     == i, ]$y_test_df, levels = 0:1), 
+          factor(predicted_sequences[rowSums(select(predicted_sequences, 
+                                                    -y_test_df, -prediction)) 
+                                     == i, ]$prediction, levels = 0:1))
+}
+
+for (j in 4:14) {
+    ctbl <- confusion_table(j)
+    print(paste0(j, " Pitches; TPR: ", round(ctbl[2, 2] / sum(ctbl[2, ]), 4), 
+                 ", TNR: ", round(ctbl[1, 1] / sum(ctbl[1, ]), 4), ", FPR: ", 
+                 round(ctbl[1, 2] / sum(ctbl[1, ]), 4), ", FNR: ", 
+                 round(ctbl[2, 1] / sum(ctbl[2, ]), 4)))
+}
+
+empty_ct <- as.table(matrix(0, nrow = 2, ncol = 2)) %>%
+    `rownames<-`(c(0, 1)) %>%
+    `colnames<-`(c(0, 1))
+for (k in 4:18) {
+    empty_ct <- empty_ct + confusion_table(k)
+    print(paste(k, "Pitches"))
+    print(empty_ct)
+}
+rm(empty_ct)
 
 count_and_rate <- function(column) {
     counts <- table(na.omit(column))
@@ -386,4 +412,18 @@ rates_df <- bind_rows(data.frame(matrix("True Positives", nrow = 1,
     replace(is.na(.), 0) %>%
     select(-id)
 
-write.csv(rates_df, "rates.csv", row.names=FALSE)
+# write.csv(rates_df, "rates.csv", row.names=FALSE)
+
+tp_counts <- tp_sequences %>%
+    mutate(id = rownames(.), 
+           str_sequences = map_chr(sequences, ~ paste(.x, collapse = ", "))) %>%
+    group_by(str_sequences) %>%
+    summarise(count_pos = n())
+
+tn_counts <- tn_sequences %>%
+    mutate(id = rownames(.)) %>%
+           # str_sequences = map_chr(sequences, ~ paste(.x, collapse = ", "))) %>%
+    group_by(sequences) %>%
+    summarise(count_neg = n())
+
+sequence_counts <- merge(tp_counts, tn_counts, by = "str_sequences")
