@@ -415,15 +415,13 @@ rates_df <- bind_rows(data.frame(matrix("True Positives", nrow = 1,
 # write.csv(rates_df, "rates.csv", row.names=FALSE)
 
 tp_counts <- tp_sequences %>%
-    mutate(id = rownames(.), 
-           str_sequences = map_chr(sequences, ~ paste(.x, collapse = ", "))) %>%
-    group_by(str_sequences) %>%
-    summarise(count_pos = n())
+    mutate(id = rownames(.)) %>%
+    group_by(sequences) %>%
+    summarise(count = n()) %>%
+    arrange(desc(count))
 
 tn_counts <- tn_sequences %>%
     mutate(id = rownames(.)) %>%
-           # str_sequences = map_chr(sequences, ~ paste(.x, collapse = ", "))) %>%
     group_by(sequences) %>%
-    summarise(count_neg = n())
-
-sequence_counts <- merge(tp_counts, tn_counts, by = "str_sequences")
+    summarise(count = n()) %>%
+    arrange(desc(count))
