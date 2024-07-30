@@ -412,8 +412,8 @@ rates_df <- bind_rows(data.frame(matrix("True Positives", nrow = 1,
     replace(is.na(.), 0) %>%
     select(-id)
 
-write.csv(rates_df, "rates.csv", row.names=FALSE)
-write.csv(predicted_sequences, "predicted_sequences.csv", row.names=FALSE)
+# write.csv(rates_df, "rates.csv", row.names=FALSE)
+# write.csv(predicted_sequences, "predicted_sequences.csv", row.names=FALSE)
 
 tp_counts <- tp_sequences %>%
     mutate(id = rownames(.)) %>%
